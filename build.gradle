@@ -1,0 +1,63 @@
+apply plugin: 'scala'
+apply plugin: 'eclipse'
+
+version = '0.0.1'
+
+ext.launcherMain = 'org.kneelak.hellovulkan.HelloVulkanLauncher'
+
+ext.scalaVersion = '2.12.1'
+ext.jomlVersion = '1.9.2'
+ext.lwjglVersion = '3.1.1'
+ext.lwjglNativeTypes = ['natives-windows', 'natives-linux', 'natives-macos']
+
+sourceSets {
+	launcher {
+		java {
+			srcDir 'src/launcher/main'
+			srcDir 'CPControl/src/main/java'
+		}
+	}
+}
+
+repositories {
+	jcenter()
+}
+
+dependencies {
+	compile "org.scala-lang:scala-library:${scalaVersion}"
+	compile "org.scala-lang:scala-reflect:${scalaVersion}"
+	
+	compile "org.joml:joml:${jomlVersion}"
+
+	compile "org.lwjgl:lwjgl:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-assimp:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-glfw:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-openal:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-stb:${lwjglVersion}"
+	compile "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
+
+	lwjglNativeTypes.each { lwjglNatives ->
+		runtime "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
+		runtime "org.lwjgl:lwjgl-assimp:${lwjglVersion}:${lwjglNatives}"
+		runtime "org.lwjgl:lwjgl-glfw:${lwjglVersion}:${lwjglNatives}"
+		runtime "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}:${lwjglNatives}"
+		runtime "org.lwjgl:lwjgl-openal:${lwjglVersion}:${lwjglNatives}"
+		runtime "org.lwjgl:lwjgl-stb:${lwjglVersion}:${lwjglNatives}"
+	}
+}
+
+// builds the launch jar
+task launcherJar(type: Jar, dependsOn: [jar, launcherClasses]) {
+	manifest { attributes 'Main-Class': launcherMain }
+	baseName "${project.name}-all"
+	from(configurations.runtime) { into 'libs' }
+	from(jar.outputs.files) { into 'app' }
+	from(sourceSets.launcher.output)
+	from('LICENSE')
+	
+	group 'Build'
+	description 'Creates a jar with all dependencies included.'
+}
+
+assemble.dependsOn launcherJar
