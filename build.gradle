@@ -20,15 +20,15 @@ repositories {
 }
 
 dependencies {
-	compile "org.joml:joml:${jomlVersion}"
+	implementation "org.joml:joml:${jomlVersion}"
 
-	compile "org.lwjgl:lwjgl:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-assimp:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-glfw:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-openal:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-stb:${lwjglVersion}"
-	compile "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-assimp:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-glfw:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-openal:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-stb:${lwjglVersion}"
+	implementation "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
 
 	lwjglNativeTypes.each { lwjglNatives ->
 		runtime "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
