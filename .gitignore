@@ -1,8 +1,11 @@
 /.gradle/
+/.idea/
 /.settings/
 /bin/
 /.cache-main
 /.classpath
 /.project
+
+/*.ipr
 
 *-swp

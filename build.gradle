@@ -1,32 +1,25 @@
-apply plugin: 'scala'
-apply plugin: 'eclipse'
+plugins {
+    id 'java'
+    id 'com.zyxist.chainsaw' version '0.3.2'
+    id 'org.beryx.jlink' version '2.6.6'
+    id 'application'
+}
 
 version = '0.0.1'
 
-ext.launcherMain = 'org.kneelak.hellovulkan.HelloVulkanLauncher'
+sourceCompatibility = 11
 
-ext.scalaVersion = '2.12.1'
-ext.jomlVersion = '1.9.2'
-ext.lwjglVersion = '3.1.1'
+mainClassName = 'com.kneelawk.hellovulkan.HelloVulkan'
+
+ext.jomlVersion = '1.9.12'
+ext.lwjglVersion = '3.2.1'
 ext.lwjglNativeTypes = ['natives-windows', 'natives-linux', 'natives-macos']
-
-sourceSets {
-	launcher {
-		java {
-			srcDir 'src/launcher/main'
-			srcDir 'CPControl/src/main/java'
-		}
-	}
-}
 
 repositories {
 	jcenter()
 }
 
 dependencies {
-	compile "org.scala-lang:scala-library:${scalaVersion}"
-	compile "org.scala-lang:scala-reflect:${scalaVersion}"
-	
 	compile "org.joml:joml:${jomlVersion}"
 
 	compile "org.lwjgl:lwjgl:${lwjglVersion}"
@@ -47,17 +40,9 @@ dependencies {
 	}
 }
 
-// builds the launch jar
-task launcherJar(type: Jar, dependsOn: [jar, launcherClasses]) {
-	manifest { attributes 'Main-Class': launcherMain }
-	baseName "${project.name}-all"
-	from(configurations.runtime) { into 'libs' }
-	from(jar.outputs.files) { into 'app' }
-	from(sourceSets.launcher.output)
-	from('LICENSE')
-	
-	group 'Build'
-	description 'Creates a jar with all dependencies included.'
+jlink {
+    options = ['--compress', '2', '--no-header-files', '--no-man-pages']
+    launcher {
+        name = 'HelloVulkan'
+    }
 }
-
-assemble.dependsOn launcherJar
