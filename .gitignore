@@ -2,6 +2,7 @@
 /.idea/
 /.settings/
 /bin/
+/build/
 /.cache-main
 /.classpath
 /.project
