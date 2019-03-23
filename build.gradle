@@ -21,6 +21,7 @@ repositories {
 
 dependencies {
 	implementation "org.joml:joml:${jomlVersion}"
+    implementation "com.google.guava:guava:27.0.1-jre"
 
 	implementation "org.lwjgl:lwjgl:${lwjglVersion}"
 	implementation "org.lwjgl:lwjgl-assimp:${lwjglVersion}"
