@@ -76,7 +76,9 @@ public class HelloVulkanApplication {
 
 			System.out.println(extensionCountBuffer.get(0) + " extensions found:");
 			for (VkExtensionProperties extensionProperties : extensionPropertiesBuffer) {
-				System.out.println("\t" + extensionProperties.extensionNameString() + " v" + extensionProperties.specVersion());
+				int specVersion = extensionProperties.specVersion();
+				System.out.println("\t" + extensionProperties.extensionNameString() + " v"
+						+ VK_VERSION_MAJOR(specVersion) + "." + VK_VERSION_MINOR(specVersion) + "." + VK_VERSION_PATCH(specVersion));
 				requiredExtensions.remove(extensionProperties.extensionNameString());
 			}
 
@@ -114,7 +116,9 @@ public class HelloVulkanApplication {
 
 			System.out.println(layerCountBuffer.get(0) + " layers found:");
 			for (VkLayerProperties layerProperties : layerPropertiesBuffer) {
-				System.out.println("\t" + layerProperties.layerNameString() + " v" + layerProperties.specVersion());
+				int specVersion = layerProperties.specVersion();
+				System.out.println("\t" + layerProperties.layerNameString() + " v"
+						+ VK_VERSION_MAJOR(specVersion) + "." + VK_VERSION_MINOR(specVersion) + "." + VK_VERSION_PATCH(specVersion));
 				requiredLayers.remove(layerProperties.layerNameString());
 			}
 
@@ -255,8 +259,12 @@ public class HelloVulkanApplication {
 
 			vkGetPhysicalDeviceProperties(physicalDevice, physicalDeviceProperties);
 
+			int apiVersion = physicalDeviceProperties.apiVersion();
+			int driverVersion = physicalDeviceProperties.driverVersion();
 			System.out.println("\t" + physicalDeviceProperties.deviceNameString() + " - API: "
-					+ physicalDeviceProperties.apiVersion() + " & DRIVER: " + physicalDeviceProperties.driverVersion());
+					+ VK_VERSION_MAJOR(apiVersion) + "." + VK_VERSION_MINOR(apiVersion) + "." + VK_VERSION_PATCH(apiVersion)
+					+ " & DRIVER: " + VK_VERSION_MAJOR(driverVersion) + "." + VK_VERSION_MINOR(driverVersion) + "."
+					+ VK_VERSION_PATCH(driverVersion));
 
 			IntBuffer queueFamilyCountBuffer = stack.callocInt(1);
 			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, null);
