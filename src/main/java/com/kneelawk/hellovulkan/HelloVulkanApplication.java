@@ -3,7 +3,6 @@ package com.kneelawk.hellovulkan;
 import com.google.common.collect.Lists;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
@@ -29,10 +28,13 @@ public class HelloVulkanApplication {
 			VK_EXT_DEBUG_UTILS_EXTENSION_NAME
 	};
 
+	// GLFW stuff
 	private long window;
 
+	// Vulkan stuff
 	private VkInstance instance;
 	private long debugUtilsMessenger;
+	private VkPhysicalDevice physicalDevice;
 
 	public void run() {
 		initWindow();
@@ -57,6 +59,7 @@ public class HelloVulkanApplication {
 		}
 
 		createInstance();
+		pickPhysicalDevice();
 	}
 
 	private void checkExtensions() {
@@ -64,7 +67,7 @@ public class HelloVulkanApplication {
 			IntBuffer extensionCountBuffer = stack.callocInt(1);
 			vkEnumerateInstanceExtensionProperties((ByteBuffer) null, extensionCountBuffer, null);
 
-			VkExtensionProperties.Buffer extensionPropertiesBuffer = VkExtensionProperties.malloc(extensionCountBuffer.get(0));
+			VkExtensionProperties.Buffer extensionPropertiesBuffer = VkExtensionProperties.mallocStack(extensionCountBuffer.get(0), stack);
 			vkEnumerateInstanceExtensionProperties((ByteBuffer) null, extensionCountBuffer, extensionPropertiesBuffer);
 
 			List<String> requiredExtensions = getRequiredExtensions();
@@ -102,7 +105,7 @@ public class HelloVulkanApplication {
 			IntBuffer layerCountBuffer = stack.callocInt(1);
 			vkEnumerateInstanceLayerProperties(layerCountBuffer, null);
 
-			VkLayerProperties.Buffer layerPropertiesBuffer = VkLayerProperties.malloc(layerCountBuffer.get(0));
+			VkLayerProperties.Buffer layerPropertiesBuffer = VkLayerProperties.mallocStack(layerCountBuffer.get(0), stack);
 			vkEnumerateInstanceLayerProperties(layerCountBuffer, layerPropertiesBuffer);
 
 			List<String> requiredLayers = Lists.newArrayList(LAYERS);
@@ -170,7 +173,9 @@ public class HelloVulkanApplication {
 				messengerCreateInfo.pUserData(NULL);
 
 				LongBuffer debugUtilsMessengerBuffer = stack.mallocLong(1);
-				vkCreateDebugUtilsMessengerEXT(instance, messengerCreateInfo, null, debugUtilsMessengerBuffer);
+				if (vkCreateDebugUtilsMessengerEXT(instance, messengerCreateInfo, null, debugUtilsMessengerBuffer) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to create debug messenger");
+				}
 				debugUtilsMessenger = debugUtilsMessengerBuffer.get(0);
 			}
 		}
@@ -213,6 +218,108 @@ public class HelloVulkanApplication {
 		return VK_FALSE;
 	}
 
+	private void pickPhysicalDevice() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			IntBuffer physicalDeviceCountBuffer = stack.callocInt(1);
+
+			vkEnumeratePhysicalDevices(instance, physicalDeviceCountBuffer, null);
+
+			int physicalDeviceCount = physicalDeviceCountBuffer.get(0);
+
+			if (physicalDeviceCount == 0) {
+				throw new RuntimeException("No physical device found that supports vulkan");
+			}
+
+			PointerBuffer physicalDeviceBuffer = stack.mallocPointer(physicalDeviceCount);
+
+			vkEnumeratePhysicalDevices(instance, physicalDeviceCountBuffer, physicalDeviceBuffer);
+
+			System.out.println(physicalDeviceCount + " physical devices:");
+			for (int i = 0; i < physicalDeviceCount; i++) {
+				VkPhysicalDevice dev = new VkPhysicalDevice(physicalDeviceBuffer.get(i), instance);
+				printPhysicalDevice(dev);
+				if (checkPhysicalDeviceCompatibility(dev) && physicalDevice == null) {
+					physicalDevice = dev;
+				}
+			}
+
+			if (physicalDevice == null) {
+				throw new RuntimeException("No compatible physical device detected");
+			}
+		}
+	}
+
+	private void printPhysicalDevice(VkPhysicalDevice physicalDevice) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkPhysicalDeviceProperties physicalDeviceProperties = VkPhysicalDeviceProperties.mallocStack(stack);
+
+			vkGetPhysicalDeviceProperties(physicalDevice, physicalDeviceProperties);
+
+			System.out.println("\t" + physicalDeviceProperties.deviceNameString() + " - API: "
+					+ physicalDeviceProperties.apiVersion() + " & DRIVER: " + physicalDeviceProperties.driverVersion());
+
+			IntBuffer queueFamilyCountBuffer = stack.callocInt(1);
+			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, null);
+			int queueFamilyCount = queueFamilyCountBuffer.get(0);
+
+			VkQueueFamilyProperties.Buffer queueFamilyPropertiesBuffer = VkQueueFamilyProperties.mallocStack(queueFamilyCount, stack);
+			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, queueFamilyPropertiesBuffer);
+
+			System.out.println("\t" + queueFamilyCount + " queue families:");
+			for (int i = 0; i < queueFamilyCount; i++) {
+				VkQueueFamilyProperties queueFamilyProperties = queueFamilyPropertiesBuffer.get(i);
+
+				List<String> queueFamilyFlags = Lists.newArrayList();
+				if ((queueFamilyProperties.queueFlags() & VK_QUEUE_GRAPHICS_BIT) != 0) {
+					queueFamilyFlags.add("VK_QUEUE_GRAPHICS_BIT");
+				}
+				if ((queueFamilyProperties.queueFlags() & VK_QUEUE_COMPUTE_BIT) != 0) {
+					queueFamilyFlags.add("VK_QUEUE_COMPUTE_BIT");
+				}
+				if ((queueFamilyProperties.queueFlags() & VK_QUEUE_TRANSFER_BIT) != 0) {
+					queueFamilyFlags.add("VK_QUEUE_TRANSFER_BIT");
+				}
+				if ((queueFamilyProperties.queueFlags() & VK_QUEUE_SPARSE_BINDING_BIT) != 0) {
+					queueFamilyFlags.add("VK_QUEUE_SPARSE_BINDING_BIT");
+				}
+
+				System.out.println("\t\tCount: " + queueFamilyProperties.queueCount() + ", Flags: " + queueFamilyFlags);
+			}
+		}
+	}
+
+	private boolean checkPhysicalDeviceCompatibility(VkPhysicalDevice physicalDevice) {
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+		return indices.isComplete();
+	}
+
+	private QueueFamilyIndices findQueueFamilies(VkPhysicalDevice physicalDevice) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			QueueFamilyIndices indices = new QueueFamilyIndices();
+
+			IntBuffer queueFamilyCountBuffer = stack.callocInt(1);
+			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, null);
+			int queueFamilyCount = queueFamilyCountBuffer.get(0);
+
+			VkQueueFamilyProperties.Buffer queueFamilyPropertiesBuffer = VkQueueFamilyProperties.mallocStack(queueFamilyCount, stack);
+			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, queueFamilyPropertiesBuffer);
+
+			for (int i = 0; i < queueFamilyCount; i++) {
+				VkQueueFamilyProperties queueFamilyProperties = queueFamilyPropertiesBuffer.get(i);
+				if (queueFamilyProperties.queueCount() > 0 && (queueFamilyProperties.queueFlags() & VK_QUEUE_GRAPHICS_BIT) != 0) {
+					indices.setGraphicsFamily(i);
+				}
+
+				if (indices.isComplete()) {
+					break;
+				}
+			}
+
+			return indices;
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -228,5 +335,23 @@ public class HelloVulkanApplication {
 
 		glfwDestroyWindow(window);
 		glfwTerminate();
+	}
+
+	private static class QueueFamilyIndices {
+		private int graphicsFamily;
+		private boolean hasGraphicsFamily = false;
+
+		public void setGraphicsFamily(int graphicsFamily) {
+			this.graphicsFamily = graphicsFamily;
+			hasGraphicsFamily = true;
+		}
+
+		public int getGraphicsFamily() {
+			return graphicsFamily;
+		}
+
+		public boolean isComplete() {
+			return hasGraphicsFamily;
+		}
 	}
 }
