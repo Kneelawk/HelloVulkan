@@ -108,6 +108,11 @@ public class HelloVulkanApplication {
 	private List<String> getRequiredExtensions() {
 		List<String> requiredExtensions = Lists.newArrayList();
 		PointerBuffer requiredExtensionsBuffer = glfwGetRequiredInstanceExtensions();
+
+		if (requiredExtensionsBuffer == null) {
+			throw new RuntimeException("Failed to find the vulkan extensions required for GLFW");
+		}
+
 		for (int i = 0; i < requiredExtensionsBuffer.remaining(); i++) {
 			requiredExtensions.add(requiredExtensionsBuffer.getStringASCII(i));
 		}
