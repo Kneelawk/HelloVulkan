@@ -35,6 +35,8 @@ public class HelloVulkanApplication {
 	private VkInstance instance;
 	private long debugUtilsMessenger;
 	private VkPhysicalDevice physicalDevice;
+	private VkDevice device;
+	private VkQueue graphicsQueue;
 
 	public void run() {
 		initWindow();
@@ -60,6 +62,7 @@ public class HelloVulkanApplication {
 
 		createInstance();
 		pickPhysicalDevice();
+		createLogicalDevice();
 	}
 
 	private void checkExtensions() {
@@ -328,6 +331,45 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void createLogicalDevice() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+			VkDeviceQueueCreateInfo queueCreateInfo = VkDeviceQueueCreateInfo.callocStack(stack);
+			queueCreateInfo.sType(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
+			queueCreateInfo.queueFamilyIndex(indices.getGraphicsFamily());
+			queueCreateInfo.pQueuePriorities(stack.floats(1.0f));
+
+			VkPhysicalDeviceFeatures physicalDeviceFeatures = VkPhysicalDeviceFeatures.callocStack(stack);
+
+			VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.callocStack(stack);
+			deviceCreateInfo.sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
+			deviceCreateInfo.pQueueCreateInfos(VkDeviceQueueCreateInfo.mallocStack(1, stack).put(0, queueCreateInfo));
+			deviceCreateInfo.pEnabledFeatures(physicalDeviceFeatures);
+
+			// shouldn't be necessary with up-to-date drivers, but older drivers need this
+			if (DEBUG) {
+				PointerBuffer layersBuffer = stack.mallocPointer(LAYERS.length);
+				for (int i = 0; i < LAYERS.length; i++) {
+					layersBuffer.put(i, stack.ASCII(LAYERS[i]));
+				}
+
+				deviceCreateInfo.ppEnabledLayerNames(layersBuffer);
+			}
+
+			PointerBuffer deviceBuffer = stack.mallocPointer(1);
+			if (vkCreateDevice(physicalDevice, deviceCreateInfo, null, deviceBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to create the logical device");
+			}
+
+			device = new VkDevice(deviceBuffer.get(0), physicalDevice, deviceCreateInfo);
+
+			PointerBuffer graphicsQueueBuffer = stack.mallocPointer(1);
+			vkGetDeviceQueue(device, indices.getGraphicsFamily(), 0, graphicsQueueBuffer);
+			graphicsQueue = new VkQueue(graphicsQueueBuffer.get(), device);
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -335,6 +377,8 @@ public class HelloVulkanApplication {
 	}
 
 	private void cleanup() {
+		vkDestroyDevice(device, null);
+
 		if (DEBUG) {
 			vkDestroyDebugUtilsMessengerEXT(instance, debugUtilsMessenger, null);
 		}
