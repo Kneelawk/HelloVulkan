@@ -1,20 +1,26 @@
 package com.kneelawk.hellovulkan;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.*;
+import static org.lwjgl.glfw.GLFWVulkan.glfwCreateWindowSurface;
 import static org.lwjgl.glfw.GLFWVulkan.glfwGetRequiredInstanceExtensions;
 import static org.lwjgl.system.MemoryUtil.NULL;
 import static org.lwjgl.vulkan.EXTDebugUtils.*;
+import static org.lwjgl.vulkan.KHRSurface.vkDestroySurfaceKHR;
+import static org.lwjgl.vulkan.KHRSurface.vkGetPhysicalDeviceSurfaceSupportKHR;
 import static org.lwjgl.vulkan.VK10.*;
 
 public class HelloVulkanApplication {
@@ -34,9 +40,11 @@ public class HelloVulkanApplication {
 	// Vulkan stuff
 	private VkInstance instance;
 	private long debugUtilsMessenger;
+	private long surface;
 	private VkPhysicalDevice physicalDevice;
 	private VkDevice device;
 	private VkQueue graphicsQueue;
+	private VkQueue presentQueue;
 
 	public void run() {
 		initWindow();
@@ -66,6 +74,7 @@ public class HelloVulkanApplication {
 			setupDebugCallback();
 		}
 
+		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
 	}
@@ -232,6 +241,17 @@ public class HelloVulkanApplication {
 		return VK_FALSE;
 	}
 
+	private void createSurface() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			LongBuffer surfaceBuffer = stack.mallocLong(1);
+			if (glfwCreateWindowSurface(instance, window, null, surfaceBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Unable to create the surface");
+			}
+
+			surface = surfaceBuffer.get(0);
+		}
+	}
+
 	private void pickPhysicalDevice() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			IntBuffer physicalDeviceCountBuffer = stack.callocInt(1);
@@ -329,6 +349,12 @@ public class HelloVulkanApplication {
 					indices.setGraphicsFamily(i);
 				}
 
+				IntBuffer presentSupportBuffer = stack.callocInt(1);
+				vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, presentSupportBuffer);
+				if (queueFamilyProperties.queueCount() > 0 && presentSupportBuffer.get(0) != 0) {
+					indices.setPresentFamily(i);
+				}
+
 				if (indices.isComplete()) {
 					break;
 				}
@@ -342,16 +368,24 @@ public class HelloVulkanApplication {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-			VkDeviceQueueCreateInfo queueCreateInfo = VkDeviceQueueCreateInfo.callocStack(stack);
-			queueCreateInfo.sType(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
-			queueCreateInfo.queueFamilyIndex(indices.getGraphicsFamily());
-			queueCreateInfo.pQueuePriorities(stack.floats(1.0f));
+			Set<Integer> uniqueQueueFamilies = ImmutableSet.of(indices.getGraphicsFamily(), indices.getPresentFamily());
+
+			FloatBuffer queuePrioritiesBuffer = stack.floats(1.0f);
+			VkDeviceQueueCreateInfo.Buffer queueCreateInfoBuffer = VkDeviceQueueCreateInfo.mallocStack(uniqueQueueFamilies.size(), stack);
+			for (int queueFamily : uniqueQueueFamilies) {
+				VkDeviceQueueCreateInfo queueCreateInfo = VkDeviceQueueCreateInfo.callocStack(stack);
+				queueCreateInfo.sType(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
+				queueCreateInfo.queueFamilyIndex(queueFamily);
+				queueCreateInfo.pQueuePriorities(queuePrioritiesBuffer);
+				queueCreateInfoBuffer.put(queueCreateInfo);
+			}
+			queueCreateInfoBuffer.flip();
 
 			VkPhysicalDeviceFeatures physicalDeviceFeatures = VkPhysicalDeviceFeatures.callocStack(stack);
 
 			VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.callocStack(stack);
 			deviceCreateInfo.sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
-			deviceCreateInfo.pQueueCreateInfos(VkDeviceQueueCreateInfo.mallocStack(1, stack).put(0, queueCreateInfo));
+			deviceCreateInfo.pQueueCreateInfos(queueCreateInfoBuffer);
 			deviceCreateInfo.pEnabledFeatures(physicalDeviceFeatures);
 
 			// shouldn't be necessary with up-to-date drivers, but older drivers need this
@@ -371,9 +405,13 @@ public class HelloVulkanApplication {
 
 			device = new VkDevice(deviceBuffer.get(0), physicalDevice, deviceCreateInfo);
 
-			PointerBuffer graphicsQueueBuffer = stack.mallocPointer(1);
-			vkGetDeviceQueue(device, indices.getGraphicsFamily(), 0, graphicsQueueBuffer);
-			graphicsQueue = new VkQueue(graphicsQueueBuffer.get(), device);
+			PointerBuffer queueBuffer = stack.mallocPointer(1);
+
+			vkGetDeviceQueue(device, indices.getGraphicsFamily(), 0, queueBuffer);
+			graphicsQueue = new VkQueue(queueBuffer.get(0), device);
+
+			vkGetDeviceQueue(device, indices.getPresentFamily(), 0, queueBuffer);
+			presentQueue = new VkQueue(queueBuffer.get(0), device);
 		}
 	}
 
@@ -385,6 +423,7 @@ public class HelloVulkanApplication {
 
 	private void cleanup() {
 		vkDestroyDevice(device, null);
+		vkDestroySurfaceKHR(instance, surface, null);
 
 		if (DEBUG) {
 			vkDestroyDebugUtilsMessengerEXT(instance, debugUtilsMessenger, null);
@@ -399,18 +438,29 @@ public class HelloVulkanApplication {
 	private static class QueueFamilyIndices {
 		private int graphicsFamily;
 		private boolean hasGraphicsFamily = false;
+		private int presentFamily;
+		private boolean hasPresentFamily = false;
 
 		public void setGraphicsFamily(int graphicsFamily) {
 			this.graphicsFamily = graphicsFamily;
 			hasGraphicsFamily = true;
 		}
 
+		public void setPresentFamily(int presentFamily) {
+			this.presentFamily = presentFamily;
+			hasPresentFamily = true;
+		}
+
 		public int getGraphicsFamily() {
 			return graphicsFamily;
 		}
 
+		public int getPresentFamily() {
+			return presentFamily;
+		}
+
 		public boolean isComplete() {
-			return hasGraphicsFamily;
+			return hasGraphicsFamily && hasPresentFamily;
 		}
 	}
 }
