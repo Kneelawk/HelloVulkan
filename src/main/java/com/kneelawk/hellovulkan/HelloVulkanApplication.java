@@ -61,6 +61,11 @@ public class HelloVulkanApplication {
 		}
 
 		createInstance();
+
+		if (DEBUG) {
+			setupDebugCallback();
+		}
+
 		pickPhysicalDevice();
 		createLogicalDevice();
 	}
@@ -168,23 +173,25 @@ public class HelloVulkanApplication {
 			}
 
 			instance = new VkInstance(instanceBuf.get(0), instanceCreateInfo);
+		}
+	}
 
-			if (DEBUG) {
-				VkDebugUtilsMessengerCreateInfoEXT messengerCreateInfo = VkDebugUtilsMessengerCreateInfoEXT.callocStack(stack);
-				messengerCreateInfo.sType(VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT);
-				messengerCreateInfo.messageSeverity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT
-						| VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
-				messengerCreateInfo.messageType(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-						| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT);
-				messengerCreateInfo.pfnUserCallback(this::debugMessageCallback);
-				messengerCreateInfo.pUserData(NULL);
+	private void setupDebugCallback() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkDebugUtilsMessengerCreateInfoEXT messengerCreateInfo = VkDebugUtilsMessengerCreateInfoEXT.callocStack(stack);
+			messengerCreateInfo.sType(VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT);
+			messengerCreateInfo.messageSeverity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT
+					| VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+			messengerCreateInfo.messageType(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+					| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT);
+			messengerCreateInfo.pfnUserCallback(this::debugMessageCallback);
+			messengerCreateInfo.pUserData(NULL);
 
-				LongBuffer debugUtilsMessengerBuffer = stack.mallocLong(1);
-				if (vkCreateDebugUtilsMessengerEXT(instance, messengerCreateInfo, null, debugUtilsMessengerBuffer) != VK_SUCCESS) {
-					throw new RuntimeException("Failed to create debug messenger");
-				}
-				debugUtilsMessenger = debugUtilsMessengerBuffer.get(0);
+			LongBuffer debugUtilsMessengerBuffer = stack.mallocLong(1);
+			if (vkCreateDebugUtilsMessengerEXT(instance, messengerCreateInfo, null, debugUtilsMessengerBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to create debug messenger");
 			}
+			debugUtilsMessenger = debugUtilsMessengerBuffer.get(0);
 		}
 	}
 
