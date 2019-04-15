@@ -49,6 +49,9 @@ public class HelloVulkanApplication {
 	private VkQueue graphicsQueue;
 	private VkQueue presentQueue;
 	private long swapChain;
+	private List<Long> swapChainImages = Lists.newArrayList();
+	private int swapChainImageFormat;
+	private VkExtent2D swapChainExtent = VkExtent2D.mallocStack();
 
 	public void run() {
 		initWindow();
@@ -567,6 +570,19 @@ public class HelloVulkanApplication {
 			}
 
 			swapChain = swapChainBuffer.get(0);
+
+			IntBuffer imageCountBuffer = stack.mallocInt(1);
+			vkGetSwapchainImagesKHR(device, swapChain, imageCountBuffer, null);
+			imageCount = imageCountBuffer.get(0);
+			LongBuffer swapChainImagesBuffer = stack.mallocLong(imageCount);
+			vkGetSwapchainImagesKHR(device, swapChain, imageCountBuffer, swapChainImagesBuffer);
+
+			for (int i = 0; i < imageCount; i++) {
+				swapChainImages.add(swapChainImagesBuffer.get(i));
+			}
+
+			swapChainImageFormat = surfaceFormat.format();
+			swapChainExtent.set(extent);
 		}
 	}
 
