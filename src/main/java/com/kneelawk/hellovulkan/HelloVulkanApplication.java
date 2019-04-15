@@ -84,7 +84,7 @@ public class HelloVulkanApplication {
 		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
-
+		createSwapChain();
 	}
 
 	private void checkExtensions() {
