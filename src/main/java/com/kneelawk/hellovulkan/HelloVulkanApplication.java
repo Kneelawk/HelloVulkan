@@ -52,6 +52,7 @@ public class HelloVulkanApplication {
 	private List<Long> swapChainImages = Lists.newArrayList();
 	private int swapChainImageFormat;
 	private VkExtent2D swapChainExtent = VkExtent2D.mallocStack();
+	private List<Long> swapChainImageViews = Lists.newArrayList();
 
 	public void run() {
 		initWindow();
@@ -85,6 +86,7 @@ public class HelloVulkanApplication {
 		pickPhysicalDevice();
 		createLogicalDevice();
 		createSwapChain();
+		createImageViews();
 	}
 
 	private void checkExtensions() {
@@ -651,6 +653,34 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void createImageViews() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			for (Long swapChainImage : swapChainImages) {
+				VkImageViewCreateInfo createInfo = VkImageViewCreateInfo.callocStack(stack);
+				createInfo.sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
+				createInfo.image(swapChainImage);
+				createInfo.viewType(VK_IMAGE_VIEW_TYPE_2D);
+				createInfo.format(swapChainImageFormat);
+				createInfo.components().r(VK_COMPONENT_SWIZZLE_IDENTITY);
+				createInfo.components().g(VK_COMPONENT_SWIZZLE_IDENTITY);
+				createInfo.components().b(VK_COMPONENT_SWIZZLE_IDENTITY);
+				createInfo.components().a(VK_COMPONENT_SWIZZLE_IDENTITY);
+				createInfo.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+				createInfo.subresourceRange().baseMipLevel(0);
+				createInfo.subresourceRange().levelCount(1);
+				createInfo.subresourceRange().baseArrayLayer(0);
+				createInfo.subresourceRange().layerCount(1);
+
+				LongBuffer swapChainImageViewBuffer = stack.mallocLong(1);
+				if (vkCreateImageView(device, createInfo, null, swapChainImageViewBuffer) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to create an image view");
+				}
+
+				swapChainImageViews.add(swapChainImageViewBuffer.get(0));
+			}
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -658,6 +688,10 @@ public class HelloVulkanApplication {
 	}
 
 	private void cleanup() {
+		for (long imageView : swapChainImageViews) {
+			vkDestroyImageView(device, imageView, null);
+		}
+
 		vkDestroySwapchainKHR(device, swapChain, null);
 		vkDestroyDevice(device, null);
 		vkDestroySurfaceKHR(instance, surface, null);
