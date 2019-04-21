@@ -1,6 +1,6 @@
 package com.kneelawk.spirv
 
-
+import org.apache.tools.ant.util.TeeOutputStream
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.Directory
@@ -60,10 +60,10 @@ class SpirvCompile extends DefaultTask {
         execAction.args('-o', outputPackageDir.file(moduleName).get())
 
         ByteArrayOutputStream standardOutputBuf = new ByteArrayOutputStream()
-        execAction.standardOutput = standardOutputBuf
+        execAction.standardOutput = new TeeOutputStream(execAction.standardOutput, standardOutputBuf)
 
         ByteArrayOutputStream errorOutputBuf = new ByteArrayOutputStream()
-        execAction.errorOutput = errorOutputBuf
+        execAction.errorOutput = new TeeOutputStream(execAction.errorOutput, errorOutputBuf)
 
         ExecResult result = execAction.execute()
         String standardOutput = standardOutputBuf.toString()
