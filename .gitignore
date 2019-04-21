@@ -3,6 +3,9 @@
 /.settings/
 /bin/
 /build/
+/buildSrc/.gradle/
+/buildSrc/build/
+/out/
 /.cache-main
 /.classpath
 /.project
