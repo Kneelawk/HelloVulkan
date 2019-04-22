@@ -6,10 +6,12 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.nio.channels.Channels;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
@@ -18,6 +20,7 @@ import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.glfw.GLFWVulkan.glfwCreateWindowSurface;
 import static org.lwjgl.glfw.GLFWVulkan.glfwGetRequiredInstanceExtensions;
 import static org.lwjgl.system.MemoryUtil.NULL;
+import static org.lwjgl.system.MemoryUtil.memFree;
 import static org.lwjgl.vulkan.EXTDebugUtils.*;
 import static org.lwjgl.vulkan.KHRSurface.*;
 import static org.lwjgl.vulkan.KHRSwapchain.*;
@@ -87,6 +90,7 @@ public class HelloVulkanApplication {
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createGraphicsPipeline();
 	}
 
 	private void checkExtensions() {
@@ -679,6 +683,69 @@ public class HelloVulkanApplication {
 				swapChainImageViews.add(swapChainImageViewBuffer.get(0));
 			}
 		}
+	}
+
+	private void createGraphicsPipeline() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			ByteBuffer vertShaderCode;
+			try {
+				vertShaderCode = readFile("simplevert.spv");
+			} catch (IOException e) {
+				throw new RuntimeException("Failed to load the vertex shader", e);
+			}
+
+			ByteBuffer fragShaderCode;
+			try {
+				fragShaderCode = readFile("simplefrag.spv");
+			} catch (IOException e) {
+				throw new RuntimeException("Failed to load the fragment shader", e);
+			}
+
+			long vertShaderModule = createShaderModule(vertShaderCode);
+			long fragShaderModule = createShaderModule(fragShaderCode);
+
+			VkPipelineShaderStageCreateInfo.Buffer shaderStages = VkPipelineShaderStageCreateInfo.callocStack(2, stack);
+
+			shaderStages.position(0);
+			shaderStages.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
+			shaderStages.stage(VK_SHADER_STAGE_VERTEX_BIT);
+			shaderStages.module(vertShaderModule);
+			shaderStages.pName(stack.ASCII("main"));
+
+			shaderStages.position(1);
+			shaderStages.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
+			shaderStages.stage(VK_SHADER_STAGE_FRAGMENT_BIT);
+			shaderStages.module(fragShaderModule);
+			shaderStages.pName(stack.ASCII("main"));
+
+			shaderStages.rewind();
+
+			// TODO setup more pipeline stages
+
+			vkDestroyShaderModule(device, vertShaderModule, null);
+			vkDestroyShaderModule(device, fragShaderModule, null);
+		}
+	}
+
+	private ByteBuffer readFile(String filename) throws IOException {
+		return BufferUtils.toByteBuffer(Channels.newChannel(getClass().getResourceAsStream(filename)));
+	}
+
+	private long createShaderModule(ByteBuffer code) {
+		MemoryStack stack = MemoryStack.stackGet();
+
+		VkShaderModuleCreateInfo createInfo = VkShaderModuleCreateInfo.callocStack(stack);
+		createInfo.sType(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
+		createInfo.pCode(code);
+
+		LongBuffer shaderModuleBuffer = stack.mallocLong(1);
+		if (vkCreateShaderModule(device, createInfo, null, shaderModuleBuffer) != VK_SUCCESS) {
+			throw new RuntimeException("Failed to create shader module");
+		}
+
+		memFree(code);
+
+		return shaderModuleBuffer.get(0);
 	}
 
 	private void mainLoop() {
