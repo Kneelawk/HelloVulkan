@@ -40,25 +40,44 @@ public class HelloVulkanApplication {
 			VK_KHR_SWAPCHAIN_EXTENSION_NAME
 	};
 
-	// GLFW stuff
+	/*
+	 * GLFW stuff
+	 */
 	private long window;
 
-	// Vulkan stuff
+	/*
+	 * Vulkan stuff
+	 */
 	private VkInstance instance;
+
+	// debug
 	private long debugUtilsMessenger;
+
+	// surface
 	private long surface;
+
+	// device
 	private VkPhysicalDevice physicalDevice;
 	private VkDevice device;
+
+	// queues
 	private VkQueue graphicsQueue;
 	private VkQueue presentQueue;
+
+	// swap chain
 	private long swapChain;
 	private List<Long> swapChainImages = Lists.newArrayList();
 	private int swapChainImageFormat;
 	private VkExtent2D swapChainExtent = VkExtent2D.mallocStack();
 	private List<Long> swapChainImageViews = Lists.newArrayList();
+
+	// render pass
 	private long renderPass;
 	private long pipelineLayout;
 	private long graphicsPipeline;
+
+	// framebuffer
+	private List<Long> swapChainFramebuffers = Lists.newArrayList();
 
 	public void run() {
 		initWindow();
@@ -95,6 +114,7 @@ public class HelloVulkanApplication {
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createFramebuffers();
 	}
 
 	private void checkExtensions() {
@@ -391,13 +411,13 @@ public class HelloVulkanApplication {
 		VkQueueFamilyProperties.Buffer queueFamilyPropertiesBuffer = VkQueueFamilyProperties.mallocStack(queueFamilyCount, stack);
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, queueFamilyCountBuffer, queueFamilyPropertiesBuffer);
 
+		IntBuffer presentSupportBuffer = stack.callocInt(1);
 		for (int i = 0; i < queueFamilyCount; i++) {
 			VkQueueFamilyProperties queueFamilyProperties = queueFamilyPropertiesBuffer.get(i);
 			if (queueFamilyProperties.queueCount() > 0 && (queueFamilyProperties.queueFlags() & VK_QUEUE_GRAPHICS_BIT) != 0) {
 				indices.setGraphicsFamily(i);
 			}
 
-			IntBuffer presentSupportBuffer = stack.callocInt(1);
 			vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, presentSupportBuffer);
 			if (queueFamilyProperties.queueCount() > 0 && presentSupportBuffer.get(0) != 0) {
 				indices.setPresentFamily(i);
@@ -663,6 +683,8 @@ public class HelloVulkanApplication {
 
 	private void createImageViews() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+			LongBuffer swapChainImageViewBuffer = stack.mallocLong(1);
+
 			for (Long swapChainImage : swapChainImages) {
 				VkImageViewCreateInfo createInfo = VkImageViewCreateInfo.callocStack(stack);
 				createInfo.sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
@@ -679,7 +701,6 @@ public class HelloVulkanApplication {
 				createInfo.subresourceRange().baseArrayLayer(0);
 				createInfo.subresourceRange().layerCount(1);
 
-				LongBuffer swapChainImageViewBuffer = stack.mallocLong(1);
 				if (vkCreateImageView(device, createInfo, null, swapChainImageViewBuffer) != VK_SUCCESS) {
 					throw new RuntimeException("Failed to create an image view");
 				}
@@ -897,6 +918,31 @@ public class HelloVulkanApplication {
 		return shaderModuleBuffer.get(0);
 	}
 
+	private void createFramebuffers() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			LongBuffer framebufferBuffer = stack.mallocLong(1);
+			LongBuffer attachments = stack.mallocLong(1);
+
+			for (long swapChainImageView : swapChainImageViews) {
+				attachments.put(0, swapChainImageView);
+
+				VkFramebufferCreateInfo framebufferCreateInfo = VkFramebufferCreateInfo.callocStack(stack);
+				framebufferCreateInfo.sType(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
+				framebufferCreateInfo.renderPass(renderPass);
+				framebufferCreateInfo.pAttachments(attachments);
+				framebufferCreateInfo.width(swapChainExtent.width());
+				framebufferCreateInfo.height(swapChainExtent.height());
+				framebufferCreateInfo.layers(1);
+
+				if (vkCreateFramebuffer(device, framebufferCreateInfo, null, framebufferBuffer) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to create a framebuffer");
+				}
+
+				swapChainFramebuffers.add(framebufferBuffer.get(0));
+			}
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -904,6 +950,10 @@ public class HelloVulkanApplication {
 	}
 
 	private void cleanup() {
+		for (long framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, null);
+		}
+
 		vkDestroyPipeline(device, graphicsPipeline, null);
 		vkDestroyPipelineLayout(device, pipelineLayout, null);
 		vkDestroyRenderPass(device, renderPass, null);
