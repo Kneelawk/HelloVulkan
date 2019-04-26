@@ -79,6 +79,10 @@ public class HelloVulkanApplication {
 	// framebuffer
 	private List<Long> swapChainFramebuffers = Lists.newArrayList();
 
+	// command buffers
+	private long commandPool;
+	private List<VkCommandBuffer> commandBuffers = Lists.newArrayList();
+
 	public void run() {
 		initWindow();
 		initVulkan();
@@ -115,6 +119,8 @@ public class HelloVulkanApplication {
 		createRenderPass();
 		createGraphicsPipeline();
 		createFramebuffers();
+		createCommandPool();
+		createCommandBuffers();
 	}
 
 	private void checkExtensions() {
@@ -943,6 +949,77 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void createCommandPool() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+			VkCommandPoolCreateInfo commandPoolCreateInfo = VkCommandPoolCreateInfo.callocStack(stack);
+			commandPoolCreateInfo.sType(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
+			commandPoolCreateInfo.queueFamilyIndex(queueFamilyIndices.getGraphicsFamily());
+			commandPoolCreateInfo.flags(0);
+
+			LongBuffer commandPoolBuffer = stack.mallocLong(1);
+			if (vkCreateCommandPool(device, commandPoolCreateInfo, null, commandPoolBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to create command pool");
+			}
+
+			commandPool = commandPoolBuffer.get(0);
+		}
+	}
+
+	private void createCommandBuffers() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			int commandBufferCount = swapChainFramebuffers.size();
+
+			VkCommandBufferAllocateInfo commandBufferAllocateInfo = VkCommandBufferAllocateInfo.callocStack(stack);
+			commandBufferAllocateInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
+			commandBufferAllocateInfo.commandPool(commandPool);
+			commandBufferAllocateInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+			commandBufferAllocateInfo.commandBufferCount(commandBufferCount);
+
+			PointerBuffer commandBufferBuffer = stack.mallocPointer(commandBufferCount);
+			if (vkAllocateCommandBuffers(device, commandBufferAllocateInfo, commandBufferBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to allocate command buffers");
+			}
+
+			VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
+			beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+			beginInfo.flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT);
+
+			VkClearColorValue clearColor = VkClearColorValue.callocStack(stack).float32(stack.floats(0.0f, 0.0f, 0.0f, 1.0f));
+			VkClearValue.Buffer clearValueBuffer = VkClearValue.callocStack(1, stack).color(clearColor);
+
+			for (int i = 0; i < commandBufferCount; i++) {
+				VkCommandBuffer commandBuffer = new VkCommandBuffer(commandBufferBuffer.get(i), device);
+				commandBuffers.add(commandBuffer);
+
+				if (vkBeginCommandBuffer(commandBuffer, beginInfo) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to begin recording to a command buffer");
+				}
+
+				VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.callocStack(stack);
+				renderPassBeginInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
+				renderPassBeginInfo.renderPass(renderPass);
+				renderPassBeginInfo.framebuffer(swapChainFramebuffers.get(i));
+				renderPassBeginInfo.renderArea().offset(VkOffset2D.callocStack(stack).set(0, 0));
+				renderPassBeginInfo.renderArea().extent(swapChainExtent);
+				renderPassBeginInfo.pClearValues(clearValueBuffer);
+
+				vkCmdBeginRenderPass(commandBuffer, renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+				vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+				vkCmdEndRenderPass(commandBuffer);
+
+				if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to record a command buffer");
+				}
+			}
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
@@ -950,6 +1027,8 @@ public class HelloVulkanApplication {
 	}
 
 	private void cleanup() {
+		vkDestroyCommandPool(device, commandPool, null);
+
 		for (long framebuffer : swapChainFramebuffers) {
 			vkDestroyFramebuffer(device, framebuffer, null);
 		}
