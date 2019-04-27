@@ -67,10 +67,10 @@ public class HelloVulkanApplication {
 
 	// swap chain
 	private long swapChain;
-	private List<Long> swapChainImages = Lists.newArrayList();
+	private long[] swapChainImages;
 	private int swapChainImageFormat;
 	private VkExtent2D swapChainExtent = VkExtent2D.mallocStack();
-	private List<Long> swapChainImageViews = Lists.newArrayList();
+	private long[] swapChainImageViews;
 
 	// render pass
 	private long renderPass;
@@ -78,17 +78,20 @@ public class HelloVulkanApplication {
 	private long graphicsPipeline;
 
 	// framebuffer
-	private List<Long> swapChainFramebuffers = Lists.newArrayList();
+	private long[] swapChainFramebuffers;
 
 	// command buffers
 	private long commandPool;
-	private List<VkCommandBuffer> commandBuffers = Lists.newArrayList();
+	private VkCommandBuffer[] commandBuffers;
 
 	// synchronization
 	private long[] imageAvailableSemaphores = new long[MAX_FRAMES_IN_FLIGHT];
 	private long[] renderFinishedSemaphores = new long[MAX_FRAMES_IN_FLIGHT];
 	private long[] inFlightFences = new long[MAX_FRAMES_IN_FLIGHT];
 	private int currentFrame = 0;
+
+	// swap chain recreation
+	private boolean framebufferResized = false;
 
 	public void run() {
 		initWindow();
@@ -100,9 +103,14 @@ public class HelloVulkanApplication {
 	private void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
 		window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Hello Vulkan", NULL, NULL);
+		glfwSetFramebufferSizeCallback(window, this::framebufferResizeCallback);
+	}
+
+	private void framebufferResizeCallback(long window, int width, int height) {
+		framebufferResized = true;
 	}
 
 	private void initVulkan() {
@@ -569,6 +577,28 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void recreateSwapChain() {
+		MemoryStack stack = MemoryStack.stackGet();
+
+		IntBuffer widthBuffer = stack.callocInt(1);
+		IntBuffer heightBuffer = stack.callocInt(1);
+		while (widthBuffer.get(0) == 0 || heightBuffer.get(0) == 0) {
+			glfwGetFramebufferSize(window, widthBuffer, heightBuffer);
+			glfwWaitEvents();
+		}
+
+		vkDeviceWaitIdle(device);
+
+		cleanupSwapChain();
+
+		createSwapChain();
+		createImageViews();
+		createRenderPass();
+		createGraphicsPipeline();
+		createFramebuffers();
+		createCommandBuffers();
+	}
+
 	private void createSwapChain() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 
@@ -621,8 +651,10 @@ public class HelloVulkanApplication {
 			LongBuffer swapChainImagesBuffer = stack.mallocLong(imageCount);
 			vkGetSwapchainImagesKHR(device, swapChain, imageCountBuffer, swapChainImagesBuffer);
 
+			swapChainImages = new long[imageCount];
+
 			for (int i = 0; i < imageCount; i++) {
-				swapChainImages.add(swapChainImagesBuffer.get(i));
+				swapChainImages[i] = swapChainImagesBuffer.get(i);
 			}
 
 			swapChainImageFormat = surfaceFormat.format();
@@ -671,8 +703,12 @@ public class HelloVulkanApplication {
 			int minHeight = capabilities.minImageExtent().height();
 			int maxHeight = capabilities.maxImageExtent().height();
 
-			int width = WINDOW_WIDTH;
-			int height = WINDOW_HEIGHT;
+			IntBuffer sizeBuffer = stack.mallocInt(2);
+
+			glfwGetFramebufferSize(window, sizeBuffer.position(0), sizeBuffer.position(1));
+
+			int width = sizeBuffer.get(0);
+			int height = sizeBuffer.get(1);
 
 			if (width < minWidth) {
 				width = minWidth;
@@ -699,10 +735,12 @@ public class HelloVulkanApplication {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			LongBuffer swapChainImageViewBuffer = stack.mallocLong(1);
 
-			for (Long swapChainImage : swapChainImages) {
+			swapChainImageViews = new long[swapChainImages.length];
+
+			for (int i = 0; i < swapChainImages.length; i++) {
 				VkImageViewCreateInfo createInfo = VkImageViewCreateInfo.callocStack(stack);
 				createInfo.sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
-				createInfo.image(swapChainImage);
+				createInfo.image(swapChainImages[i]);
 				createInfo.viewType(VK_IMAGE_VIEW_TYPE_2D);
 				createInfo.format(swapChainImageFormat);
 				createInfo.components().r(VK_COMPONENT_SWIZZLE_IDENTITY);
@@ -719,7 +757,7 @@ public class HelloVulkanApplication {
 					throw new RuntimeException("Failed to create an image view");
 				}
 
-				swapChainImageViews.add(swapChainImageViewBuffer.get(0));
+				swapChainImageViews[i] = swapChainImageViewBuffer.get(0);
 			}
 		}
 	}
@@ -947,8 +985,10 @@ public class HelloVulkanApplication {
 			LongBuffer framebufferBuffer = stack.mallocLong(1);
 			LongBuffer attachments = stack.mallocLong(1);
 
-			for (long swapChainImageView : swapChainImageViews) {
-				attachments.put(0, swapChainImageView);
+			swapChainFramebuffers = new long[swapChainImageViews.length];
+
+			for (int i = 0; i < swapChainImageViews.length; i++) {
+				attachments.put(0, swapChainImageViews[i]);
 
 				VkFramebufferCreateInfo framebufferCreateInfo = VkFramebufferCreateInfo.callocStack(stack);
 				framebufferCreateInfo.sType(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
@@ -962,7 +1002,7 @@ public class HelloVulkanApplication {
 					throw new RuntimeException("Failed to create a framebuffer");
 				}
 
-				swapChainFramebuffers.add(framebufferBuffer.get(0));
+				swapChainFramebuffers[i] = framebufferBuffer.get(0);
 			}
 		}
 	}
@@ -987,7 +1027,9 @@ public class HelloVulkanApplication {
 
 	private void createCommandBuffers() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			int commandBufferCount = swapChainFramebuffers.size();
+			int commandBufferCount = swapChainFramebuffers.length;
+
+			commandBuffers = new VkCommandBuffer[commandBufferCount];
 
 			VkCommandBufferAllocateInfo commandBufferAllocateInfo = VkCommandBufferAllocateInfo.callocStack(stack);
 			commandBufferAllocateInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
@@ -1009,7 +1051,7 @@ public class HelloVulkanApplication {
 
 			for (int i = 0; i < commandBufferCount; i++) {
 				VkCommandBuffer commandBuffer = new VkCommandBuffer(commandBufferBuffer.get(i), device);
-				commandBuffers.add(commandBuffer);
+				commandBuffers[i] = commandBuffer;
 
 				if (vkBeginCommandBuffer(commandBuffer, beginInfo) != VK_SUCCESS) {
 					throw new RuntimeException("Failed to begin recording to a command buffer");
@@ -1018,7 +1060,7 @@ public class HelloVulkanApplication {
 				VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.callocStack(stack);
 				renderPassBeginInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
 				renderPassBeginInfo.renderPass(renderPass);
-				renderPassBeginInfo.framebuffer(swapChainFramebuffers.get(i));
+				renderPassBeginInfo.framebuffer(swapChainFramebuffers[i]);
 				renderPassBeginInfo.renderArea().offset(VkOffset2D.callocStack(stack).set(0, 0));
 				renderPassBeginInfo.renderArea().extent(swapChainExtent);
 				renderPassBeginInfo.pClearValues(clearValueBuffer);
@@ -1076,19 +1118,27 @@ public class HelloVulkanApplication {
 	private void drawFrame() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			vkWaitForFences(device, inFlightFences[currentFrame], true, -1L);
-			vkResetFences(device, inFlightFences[currentFrame]);
 
 			IntBuffer imageIndexBuffer = stack.mallocInt(1);
-			vkAcquireNextImageKHR(device, swapChain, -1, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, imageIndexBuffer);
+			int result = vkAcquireNextImageKHR(device, swapChain, -1, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, imageIndexBuffer);
 			int imageIndex = imageIndexBuffer.get(0);
+
+			if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+				recreateSwapChain();
+				return;
+			} else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+				throw new RuntimeException("Failed to acquire swap chain image");
+			}
 
 			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
 			submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO);
 			submitInfo.waitSemaphoreCount(1);
 			submitInfo.pWaitSemaphores(stack.longs(imageAvailableSemaphores[currentFrame]));
 			submitInfo.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));
-			submitInfo.pCommandBuffers(stack.pointers(commandBuffers.get(imageIndex)));
+			submitInfo.pCommandBuffers(stack.pointers(commandBuffers[imageIndex]));
 			submitInfo.pSignalSemaphores(stack.longs(renderFinishedSemaphores[currentFrame]));
+
+			vkResetFences(device, inFlightFences[currentFrame]);
 
 			if (vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
 				throw new RuntimeException("Failed to submit draw command buffer");
@@ -1102,13 +1152,24 @@ public class HelloVulkanApplication {
 			presentInfo.pImageIndices(imageIndexBuffer);
 			presentInfo.pResults(null);
 
-			vkQueuePresentKHR(presentQueue, presentInfo);
+			result = vkQueuePresentKHR(presentQueue, presentInfo);
+
+			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+				recreateSwapChain();
+				framebufferResized = false;
+			}
+
+			if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_DATE_KHR && result != VK_SUBOPTIMAL_KHR) {
+				throw new RuntimeException("Failed to present swap chain image");
+			}
 
 			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 		}
 	}
 
 	private void cleanup() {
+		cleanupSwapChain();
+
 		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], null);
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], null);
@@ -1117,19 +1178,6 @@ public class HelloVulkanApplication {
 
 		vkDestroyCommandPool(device, commandPool, null);
 
-		for (long framebuffer : swapChainFramebuffers) {
-			vkDestroyFramebuffer(device, framebuffer, null);
-		}
-
-		vkDestroyPipeline(device, graphicsPipeline, null);
-		vkDestroyPipelineLayout(device, pipelineLayout, null);
-		vkDestroyRenderPass(device, renderPass, null);
-
-		for (long imageView : swapChainImageViews) {
-			vkDestroyImageView(device, imageView, null);
-		}
-
-		vkDestroySwapchainKHR(device, swapChain, null);
 		vkDestroyDevice(device, null);
 		vkDestroySurfaceKHR(instance, surface, null);
 
@@ -1141,6 +1189,26 @@ public class HelloVulkanApplication {
 
 		glfwDestroyWindow(window);
 		glfwTerminate();
+	}
+
+	private void cleanupSwapChain() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			vkFreeCommandBuffers(device, commandPool, stack.pointers(commandBuffers));
+
+			for (long framebuffer : swapChainFramebuffers) {
+				vkDestroyFramebuffer(device, framebuffer, null);
+			}
+
+			vkDestroyPipeline(device, graphicsPipeline, null);
+			vkDestroyPipelineLayout(device, pipelineLayout, null);
+			vkDestroyRenderPass(device, renderPass, null);
+
+			for (long imageView : swapChainImageViews) {
+				vkDestroyImageView(device, imageView, null);
+			}
+
+			vkDestroySwapchainKHR(device, swapChain, null);
+		}
 	}
 
 	private static class QueueFamilyIndices {
