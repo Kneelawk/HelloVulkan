@@ -30,6 +30,7 @@ public class HelloVulkanApplication {
 	private static final boolean DEBUG = Boolean.parseBoolean(System.getProperty("com.kneelawk.hellovulkan.Debug", "true"));
 	private static final int WINDOW_WIDTH = 1280;
 	private static final int WINDOW_HEIGHT = 720;
+	private static final int MAX_FRAMES_IN_FLIGHT = 2;
 	private static final String[] LAYERS = {
 			"VK_LAYER_LUNARG_standard_validation"
 	};
@@ -83,6 +84,12 @@ public class HelloVulkanApplication {
 	private long commandPool;
 	private List<VkCommandBuffer> commandBuffers = Lists.newArrayList();
 
+	// synchronization
+	private long[] imageAvailableSemaphores = new long[MAX_FRAMES_IN_FLIGHT];
+	private long[] renderFinishedSemaphores = new long[MAX_FRAMES_IN_FLIGHT];
+	private long[] inFlightFences = new long[MAX_FRAMES_IN_FLIGHT];
+	private int currentFrame = 0;
+
 	public void run() {
 		initWindow();
 		initVulkan();
@@ -121,6 +128,7 @@ public class HelloVulkanApplication {
 		createFramebuffers();
 		createCommandPool();
 		createCommandBuffers();
+		createSyncObjects();
 	}
 
 	private void checkExtensions() {
@@ -740,10 +748,20 @@ public class HelloVulkanApplication {
 			subpassDescriptionBuffer.colorAttachmentCount(1);
 			subpassDescriptionBuffer.pColorAttachments(colorAttachmentReferenceBuffer);
 
+			VkSubpassDependency.Buffer subpassDependencyBuffer = VkSubpassDependency.callocStack(1, stack);
+			subpassDependencyBuffer.position(0);
+			subpassDependencyBuffer.srcSubpass(VK_SUBPASS_EXTERNAL);
+			subpassDependencyBuffer.dstSubpass(0);
+			subpassDependencyBuffer.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+			subpassDependencyBuffer.srcAccessMask(0);
+			subpassDependencyBuffer.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+			subpassDependencyBuffer.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+
 			VkRenderPassCreateInfo renderPassCreateInfo = VkRenderPassCreateInfo.callocStack(stack);
 			renderPassCreateInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
 			renderPassCreateInfo.pAttachments(colorAttachmentDescriptionBuffer);
 			renderPassCreateInfo.pSubpasses(subpassDescriptionBuffer);
+			renderPassCreateInfo.pDependencies(subpassDependencyBuffer);
 
 			LongBuffer renderPassBuffer = stack.mallocLong(1);
 			if (vkCreateRenderPass(device, renderPassCreateInfo, null, renderPassBuffer) != VK_SUCCESS) {
@@ -1020,13 +1038,83 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void createSyncObjects() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkSemaphoreCreateInfo semaphoreCreateInfo = VkSemaphoreCreateInfo.callocStack(stack);
+			semaphoreCreateInfo.sType(VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+
+			VkFenceCreateInfo fenceCreateInfo = VkFenceCreateInfo.callocStack(stack);
+			fenceCreateInfo.sType(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);
+			fenceCreateInfo.flags(VK_FENCE_CREATE_SIGNALED_BIT);
+
+			LongBuffer syncObjectBuffer = stack.mallocLong(3);
+
+			for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+				if (vkCreateSemaphore(device, semaphoreCreateInfo, null, syncObjectBuffer.position(0)) != VK_SUCCESS
+						|| vkCreateSemaphore(device, semaphoreCreateInfo, null, syncObjectBuffer.position(1)) != VK_SUCCESS
+						|| vkCreateFence(device, fenceCreateInfo, null, syncObjectBuffer.position(2)) != VK_SUCCESS) {
+					throw new RuntimeException("Failed to create sync objects for a frame");
+				}
+
+				imageAvailableSemaphores[i] = syncObjectBuffer.get(0);
+				renderFinishedSemaphores[i] = syncObjectBuffer.get(1);
+				inFlightFences[i] = syncObjectBuffer.get(2);
+			}
+		}
+	}
+
 	private void mainLoop() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
+
+			drawFrame();
+		}
+
+		vkDeviceWaitIdle(device);
+	}
+
+	private void drawFrame() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			vkWaitForFences(device, inFlightFences[currentFrame], true, -1L);
+			vkResetFences(device, inFlightFences[currentFrame]);
+
+			IntBuffer imageIndexBuffer = stack.mallocInt(1);
+			vkAcquireNextImageKHR(device, swapChain, -1, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, imageIndexBuffer);
+			int imageIndex = imageIndexBuffer.get(0);
+
+			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
+			submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+			submitInfo.waitSemaphoreCount(1);
+			submitInfo.pWaitSemaphores(stack.longs(imageAvailableSemaphores[currentFrame]));
+			submitInfo.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));
+			submitInfo.pCommandBuffers(stack.pointers(commandBuffers.get(imageIndex)));
+			submitInfo.pSignalSemaphores(stack.longs(renderFinishedSemaphores[currentFrame]));
+
+			if (vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to submit draw command buffer");
+			}
+
+			VkPresentInfoKHR presentInfo = VkPresentInfoKHR.callocStack(stack);
+			presentInfo.sType(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
+			presentInfo.pWaitSemaphores(stack.longs(renderFinishedSemaphores[currentFrame]));
+			presentInfo.swapchainCount(1);
+			presentInfo.pSwapchains(stack.longs(swapChain));
+			presentInfo.pImageIndices(imageIndexBuffer);
+			presentInfo.pResults(null);
+
+			vkQueuePresentKHR(presentQueue, presentInfo);
+
+			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 		}
 	}
 
 	private void cleanup() {
+		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], null);
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], null);
+			vkDestroyFence(device, inFlightFences[i], null);
+		}
+
 		vkDestroyCommandPool(device, commandPool, null);
 
 		for (long framebuffer : swapChainFramebuffers) {
