@@ -2,6 +2,8 @@ package com.kneelawk.hellovulkan;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import org.joml.Vector2f;
+import org.joml.Vector3f;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
@@ -39,6 +41,12 @@ public class HelloVulkanApplication {
 	};
 	private static final String[] DEVICE_EXTENSIONS = {
 			VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	};
+
+	private static final Vertex[] vertices = {
+			new Vertex(new Vector2f(0.0f, -0.5f), new Vector3f(1.0f, 0.0f, 0.0f)),
+			new Vertex(new Vector2f(0.5f, 0.5f), new Vector3f(0.0f, 1.0f, 0.0f)),
+			new Vertex(new Vector2f(-0.5f, 0.5f), new Vector3f(0.0f, 0.0f, 1.0f))
 	};
 
 	/*
@@ -93,6 +101,10 @@ public class HelloVulkanApplication {
 	// swap chain recreation
 	private boolean framebufferResized = false;
 
+	// vertex buffer
+	private long vertexBuffer;
+	private long vertexBufferMemory;
+
 	public void run() {
 		initWindow();
 		initVulkan();
@@ -135,6 +147,7 @@ public class HelloVulkanApplication {
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
+		createVertexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -847,8 +860,8 @@ public class HelloVulkanApplication {
 
 			VkPipelineVertexInputStateCreateInfo vertexInputCreateInfo = VkPipelineVertexInputStateCreateInfo.callocStack(stack);
 			vertexInputCreateInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
-			vertexInputCreateInfo.pVertexBindingDescriptions(null);
-			vertexInputCreateInfo.pVertexAttributeDescriptions(null);
+			vertexInputCreateInfo.pVertexBindingDescriptions(VkVertexInputBindingDescription.callocStack(1, stack).put(0, Vertex.getBindingDescription()));
+			vertexInputCreateInfo.pVertexAttributeDescriptions(Vertex.getAttributeDescriptions());
 
 			VkPipelineInputAssemblyStateCreateInfo inputAssemblyCreateInfo = VkPipelineInputAssemblyStateCreateInfo.callocStack(stack);
 			inputAssemblyCreateInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
@@ -1025,6 +1038,69 @@ public class HelloVulkanApplication {
 		}
 	}
 
+	private void createVertexBuffer() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkBufferCreateInfo bufferCreateInfo = VkBufferCreateInfo.callocStack(stack);
+			bufferCreateInfo.sType(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
+			bufferCreateInfo.size(Vertex.SIZEOF * vertices.length);
+			bufferCreateInfo.usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+			bufferCreateInfo.sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+
+			LongBuffer vertexBufferBuffer = stack.mallocLong(1);
+			if (vkCreateBuffer(device, bufferCreateInfo, null, vertexBufferBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to create the vertex buffer");
+			}
+			vertexBuffer = vertexBufferBuffer.get(0);
+
+			VkMemoryRequirements memoryRequirements = VkMemoryRequirements.callocStack(stack);
+			vkGetBufferMemoryRequirements(device, vertexBuffer, memoryRequirements);
+
+			VkMemoryAllocateInfo memoryAllocateInfo = VkMemoryAllocateInfo.callocStack(stack);
+			memoryAllocateInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+			memoryAllocateInfo.allocationSize(memoryRequirements.size());
+			memoryAllocateInfo.memoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits(),
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+
+			LongBuffer vertexBufferMemoryBuffer = stack.mallocLong(1);
+			if (vkAllocateMemory(device, memoryAllocateInfo, null, vertexBufferMemoryBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to allocate the vertex buffer memory");
+			}
+			vertexBufferMemory = vertexBufferMemoryBuffer.get(0);
+
+			vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+			PointerBuffer dataBuffer = stack.mallocPointer(1);
+			vkMapMemory(device, vertexBufferMemory, 0, bufferCreateInfo.size(), 0, dataBuffer);
+
+			writeVertices(dataBuffer.getByteBuffer(0, (int) bufferCreateInfo.size()));
+
+			vkUnmapMemory(device, vertexBufferMemory);
+		}
+	}
+
+	private int findMemoryType(int typeFilter, int properties) {
+		MemoryStack stack = MemoryStack.stackGet();
+
+		VkPhysicalDeviceMemoryProperties memoryProperties = VkPhysicalDeviceMemoryProperties.callocStack(stack);
+		vkGetPhysicalDeviceMemoryProperties(physicalDevice, memoryProperties);
+
+		int memoryTypeCount = memoryProperties.memoryTypeCount();
+		for (int i = 0; i < memoryTypeCount; i++) {
+			VkMemoryType memoryType = memoryProperties.memoryTypes(i);
+			if ((typeFilter & (1 << i)) != 0 && (memoryType.propertyFlags() & properties) == properties) {
+				return i;
+			}
+		}
+
+		throw new RuntimeException("Failed to find a memory type");
+	}
+
+	private void writeVertices(ByteBuffer buf) {
+		for (int i = 0; i < vertices.length; i++) {
+			vertices[i].writeTo(i * Vertex.SIZEOF, buf);
+		}
+	}
+
 	private void createCommandBuffers() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			int commandBufferCount = swapChainFramebuffers.length;
@@ -1069,7 +1145,9 @@ public class HelloVulkanApplication {
 
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-				vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+				vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0));
+
+				vkCmdDraw(commandBuffer, vertices.length, 1, 0, 0);
 
 				vkCmdEndRenderPass(commandBuffer);
 
@@ -1168,13 +1246,16 @@ public class HelloVulkanApplication {
 	}
 
 	private void cleanup() {
-		cleanupSwapChain();
-
 		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], null);
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], null);
 			vkDestroyFence(device, inFlightFences[i], null);
 		}
+
+		cleanupSwapChain();
+
+		vkDestroyBuffer(device, vertexBuffer, null);
+		vkFreeMemory(device, vertexBufferMemory, null);
 
 		vkDestroyCommandPool(device, commandPool, null);
 
