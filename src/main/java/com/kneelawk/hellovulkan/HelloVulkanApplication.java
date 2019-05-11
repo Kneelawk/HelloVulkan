@@ -1,6 +1,7 @@
 package com.kneelawk.hellovulkan;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
@@ -72,6 +73,7 @@ public class HelloVulkanApplication {
 	// queues
 	private VkQueue graphicsQueue;
 	private VkQueue presentQueue;
+	private VkQueue transferQueue;
 
 	// swap chain
 	private long swapChain;
@@ -90,6 +92,7 @@ public class HelloVulkanApplication {
 
 	// command buffers
 	private long commandPool;
+	private long transferCommandPool;
 	private VkCommandBuffer[] commandBuffers;
 
 	// synchronization
@@ -458,9 +461,17 @@ public class HelloVulkanApplication {
 				indices.setPresentFamily(i);
 			}
 
+			if (queueFamilyProperties.queueCount() > 0 && (queueFamilyProperties.queueFlags() & VK_QUEUE_TRANSFER_BIT) != 0) {
+				indices.setTransferFamily(i);
+			}
+
 			if (indices.isComplete()) {
 				break;
 			}
+		}
+
+		if (!indices.isTransferFamilyFound() && indices.isGraphicsFamilyFound()) {
+			indices.setTransferFamily(indices.getGraphicsFamily());
 		}
 
 		return indices;
@@ -536,7 +547,7 @@ public class HelloVulkanApplication {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-			Set<Integer> uniqueQueueFamilies = ImmutableSet.of(indices.getGraphicsFamily(), indices.getPresentFamily());
+			Set<Integer> uniqueQueueFamilies = ImmutableSet.of(indices.getGraphicsFamily(), indices.getPresentFamily(), indices.getTransferFamily());
 
 			FloatBuffer queuePrioritiesBuffer = stack.floats(1.0f);
 			VkDeviceQueueCreateInfo.Buffer queueCreateInfoBuffer = VkDeviceQueueCreateInfo.mallocStack(uniqueQueueFamilies.size(), stack);
@@ -587,6 +598,9 @@ public class HelloVulkanApplication {
 
 			vkGetDeviceQueue(device, indices.getPresentFamily(), 0, queueBuffer);
 			presentQueue = new VkQueue(queueBuffer.get(0), device);
+
+			vkGetDeviceQueue(device, indices.getTransferFamily(), 0, queueBuffer);
+			transferQueue = new VkQueue(queueBuffer.get(0), device);
 		}
 	}
 
@@ -1033,49 +1047,89 @@ public class HelloVulkanApplication {
 			if (vkCreateCommandPool(device, commandPoolCreateInfo, null, commandPoolBuffer) != VK_SUCCESS) {
 				throw new RuntimeException("Failed to create command pool");
 			}
-
 			commandPool = commandPoolBuffer.get(0);
+
+			commandPoolCreateInfo.queueFamilyIndex(queueFamilyIndices.getTransferFamily());
+			commandPoolCreateInfo.flags(VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+			if (vkCreateCommandPool(device, commandPoolCreateInfo, null, commandPoolBuffer) != VK_SUCCESS) {
+				throw new RuntimeException("Failed to create transfer command pool");
+			}
+			transferCommandPool = commandPoolBuffer.get(0);
 		}
 	}
 
 	private void createVertexBuffer() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkBufferCreateInfo bufferCreateInfo = VkBufferCreateInfo.callocStack(stack);
-			bufferCreateInfo.sType(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
-			bufferCreateInfo.size(Vertex.SIZEOF * vertices.length);
-			bufferCreateInfo.usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-			bufferCreateInfo.sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+			LongBuffer bufferBuffer = stack.mallocLong(1);
+			LongBuffer bufferMemoryBuffer = stack.mallocLong(1);
 
-			LongBuffer vertexBufferBuffer = stack.mallocLong(1);
-			if (vkCreateBuffer(device, bufferCreateInfo, null, vertexBufferBuffer) != VK_SUCCESS) {
-				throw new RuntimeException("Failed to create the vertex buffer");
-			}
-			vertexBuffer = vertexBufferBuffer.get(0);
+			QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-			VkMemoryRequirements memoryRequirements = VkMemoryRequirements.callocStack(stack);
-			vkGetBufferMemoryRequirements(device, vertexBuffer, memoryRequirements);
-
-			VkMemoryAllocateInfo memoryAllocateInfo = VkMemoryAllocateInfo.callocStack(stack);
-			memoryAllocateInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
-			memoryAllocateInfo.allocationSize(memoryRequirements.size());
-			memoryAllocateInfo.memoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits(),
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-
-			LongBuffer vertexBufferMemoryBuffer = stack.mallocLong(1);
-			if (vkAllocateMemory(device, memoryAllocateInfo, null, vertexBufferMemoryBuffer) != VK_SUCCESS) {
-				throw new RuntimeException("Failed to allocate the vertex buffer memory");
-			}
-			vertexBufferMemory = vertexBufferMemoryBuffer.get(0);
-
-			vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+			long vertexBufferSize = Vertex.SIZEOF * vertices.length;
+			createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					bufferBuffer, bufferMemoryBuffer, ImmutableSet.of(indices.getTransferFamily()));
+			long stagingBuffer = bufferBuffer.get(0);
+			long stagingBufferMemory = bufferMemoryBuffer.get(0);
 
 			PointerBuffer dataBuffer = stack.mallocPointer(1);
-			vkMapMemory(device, vertexBufferMemory, 0, bufferCreateInfo.size(), 0, dataBuffer);
+			vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, dataBuffer);
+			writeVertices(dataBuffer.getByteBuffer(0, (int) vertexBufferSize));
+			vkUnmapMemory(device, stagingBufferMemory);
 
-			writeVertices(dataBuffer.getByteBuffer(0, (int) bufferCreateInfo.size()));
+			createBuffer(vertexBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bufferBuffer, bufferMemoryBuffer,
+					ImmutableSet.of(indices.getTransferFamily(), indices.getGraphicsFamily()));
+			vertexBuffer = bufferBuffer.get(0);
+			vertexBufferMemory = bufferMemoryBuffer.get(0);
 
-			vkUnmapMemory(device, vertexBufferMemory);
+			copyBuffer(stagingBuffer, vertexBuffer, vertexBufferSize);
+
+			vkDestroyBuffer(device, stagingBuffer, null);
+			vkFreeMemory(device, stagingBufferMemory, null);
 		}
+	}
+
+	private void createBuffer(long size, int usage, int properties, LongBuffer buffer, LongBuffer bufferMemory, Set<Integer> queueFamilyIndices) {
+		MemoryStack stack = MemoryStack.stackGet();
+
+		VkBufferCreateInfo bufferCreateInfo = VkBufferCreateInfo.callocStack(stack);
+		bufferCreateInfo.sType(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
+		bufferCreateInfo.size(size);
+		bufferCreateInfo.usage(usage);
+
+		if (queueFamilyIndices.size() > 1) {
+			bufferCreateInfo.sharingMode(VK_SHARING_MODE_CONCURRENT);
+
+			IntBuffer indexBuffer = stack.mallocInt(queueFamilyIndices.size());
+			for (int index : queueFamilyIndices) {
+				indexBuffer.put(index);
+			}
+			indexBuffer.flip();
+
+			bufferCreateInfo.pQueueFamilyIndices(indexBuffer);
+		} else {
+			bufferCreateInfo.sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+			bufferCreateInfo.pQueueFamilyIndices(stack.ints(Iterables.getOnlyElement(queueFamilyIndices)));
+		}
+
+		if (vkCreateBuffer(device, bufferCreateInfo, null, buffer) != VK_SUCCESS) {
+			throw new RuntimeException("Failed to create buffer");
+		}
+
+		VkMemoryRequirements memoryRequirements = VkMemoryRequirements.callocStack(stack);
+		vkGetBufferMemoryRequirements(device, buffer.get(0), memoryRequirements);
+
+		VkMemoryAllocateInfo allocateInfo = VkMemoryAllocateInfo.callocStack(stack);
+		allocateInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+		allocateInfo.allocationSize(memoryRequirements.size());
+		allocateInfo.memoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits(), properties));
+
+		if (vkAllocateMemory(device, allocateInfo, null, bufferMemory) != VK_SUCCESS) {
+			throw new RuntimeException("Failed to allocate buffer memory");
+		}
+
+		vkBindBufferMemory(device, buffer.get(0), bufferMemory.get(0), 0);
 	}
 
 	private int findMemoryType(int typeFilter, int properties) {
@@ -1099,6 +1153,45 @@ public class HelloVulkanApplication {
 		for (int i = 0; i < vertices.length; i++) {
 			vertices[i].writeTo(i * Vertex.SIZEOF, buf);
 		}
+	}
+
+	private void copyBuffer(long srcBuffer, long dstBuffer, long size) {
+		MemoryStack stack = MemoryStack.stackGet();
+
+		VkCommandBufferAllocateInfo allocateInfo = VkCommandBufferAllocateInfo.callocStack(stack);
+		allocateInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
+		allocateInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+		allocateInfo.commandPool(transferCommandPool);
+		allocateInfo.commandBufferCount(1);
+
+		PointerBuffer commandBufferBuffer = stack.mallocPointer(1);
+		if (vkAllocateCommandBuffers(device, allocateInfo, commandBufferBuffer) != VK_SUCCESS) {
+			throw new RuntimeException("Failed to create copy command buffer");
+		}
+		VkCommandBuffer commandBuffer = new VkCommandBuffer(commandBufferBuffer.get(0), device);
+
+		VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
+		beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+		beginInfo.flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+		vkBeginCommandBuffer(commandBuffer, beginInfo);
+
+		VkBufferCopy.Buffer copy = VkBufferCopy.callocStack(1, stack);
+		copy.position(0);
+		copy.srcOffset(0);
+		copy.dstOffset(0);
+		copy.size(size);
+		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, copy);
+
+		vkEndCommandBuffer(commandBuffer);
+
+		VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
+		submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+		submitInfo.pCommandBuffers(commandBufferBuffer);
+		vkQueueSubmit(transferQueue, submitInfo, VK_NULL_HANDLE);
+
+		vkQueueWaitIdle(transferQueue);
+
+		vkFreeCommandBuffers(device, transferCommandPool, commandBufferBuffer);
 	}
 
 	private void createCommandBuffers() {
@@ -1257,6 +1350,7 @@ public class HelloVulkanApplication {
 		vkDestroyBuffer(device, vertexBuffer, null);
 		vkFreeMemory(device, vertexBufferMemory, null);
 
+		vkDestroyCommandPool(device, transferCommandPool, null);
 		vkDestroyCommandPool(device, commandPool, null);
 
 		vkDestroyDevice(device, null);
@@ -1294,30 +1388,49 @@ public class HelloVulkanApplication {
 
 	private static class QueueFamilyIndices {
 		private int graphicsFamily;
-		private boolean hasGraphicsFamily = false;
+		private boolean graphicsFamilyFound = false;
 		private int presentFamily;
-		private boolean hasPresentFamily = false;
+		private boolean presentFamilyFound = false;
+		private int transferFamily;
+		private boolean transferFamilyFound = false;
 
 		public void setGraphicsFamily(int graphicsFamily) {
 			this.graphicsFamily = graphicsFamily;
-			hasGraphicsFamily = true;
+			graphicsFamilyFound = true;
 		}
 
 		public void setPresentFamily(int presentFamily) {
 			this.presentFamily = presentFamily;
-			hasPresentFamily = true;
+			presentFamilyFound = true;
+		}
+
+		public void setTransferFamily(int transferFamily) {
+			this.transferFamily = transferFamily;
+			transferFamilyFound = true;
 		}
 
 		public int getGraphicsFamily() {
 			return graphicsFamily;
 		}
 
+		public boolean isGraphicsFamilyFound() {
+			return graphicsFamilyFound;
+		}
+
 		public int getPresentFamily() {
 			return presentFamily;
 		}
 
+		public int getTransferFamily() {
+			return transferFamily;
+		}
+
+		public boolean isTransferFamilyFound() {
+			return transferFamilyFound;
+		}
+
 		public boolean isComplete() {
-			return hasGraphicsFamily && hasPresentFamily;
+			return graphicsFamilyFound && presentFamilyFound && transferFamilyFound;
 		}
 	}
 
