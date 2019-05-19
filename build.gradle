@@ -2,7 +2,7 @@ import com.kneelawk.spirv.SpirvCompilerPlugin
 
 plugins {
     id 'java'
-    id 'com.zyxist.chainsaw' version '0.3.1'
+    id 'org.javamodularity.moduleplugin' version '1.5.0'
     id 'org.beryx.jlink' version '2.6.6'
     id 'application'
 }
@@ -13,7 +13,7 @@ version = '0.0.1'
 
 sourceCompatibility = 11
 
-mainClassName = 'com.kneelawk.hellovulkan.HelloVulkan'
+mainClassName = "$moduleName/com.kneelawk.hellovulkan.HelloVulkan"
 
 ext.jomlVersion = '1.9.12'
 ext.lwjglVersion = '3.2.1'
@@ -40,18 +40,23 @@ dependencies {
 	implementation "org.lwjgl:lwjgl-stb:${lwjglVersion}"
 	implementation "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
 
-    implementation "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
-    implementation "org.lwjgl:lwjgl-assimp:${lwjglVersion}:${lwjglNatives}"
-    implementation "org.lwjgl:lwjgl-glfw:${lwjglVersion}:${lwjglNatives}"
-    implementation "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}:${lwjglNatives}"
-    implementation "org.lwjgl:lwjgl-openal:${lwjglVersion}:${lwjglNatives}"
-    implementation "org.lwjgl:lwjgl-stb:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl-assimp:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl-glfw:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl-openal:${lwjglVersion}:${lwjglNatives}"
+    runtime "org.lwjgl:lwjgl-stb:${lwjglVersion}:${lwjglNatives}"
+}
+
+run {
+    jvmArgs('--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives')
 }
 
 jlink {
-    options = ['--compress', '2', '--no-header-files', '--no-man-pages']
+    options = ['--compress', '2', '--no-header-files', '--no-man-pages', '--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives']
     launcher {
         name = 'HelloVulkan'
+        jvmArgs = ['--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives']
     }
 }
 
