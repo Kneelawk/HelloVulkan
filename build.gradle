@@ -1,4 +1,5 @@
 import com.kneelawk.spirv.SpirvCompilerPlugin
+import org.gradle.internal.os.OperatingSystem
 
 plugins {
     id 'java'
@@ -15,9 +16,20 @@ sourceCompatibility = 11
 
 mainClassName = "$moduleName/com.kneelawk.hellovulkan.HelloVulkan"
 
-ext.jomlVersion = '1.9.12'
-ext.lwjglVersion = '3.2.1'
-ext.lwjglNatives = 'natives-linux'
+project.ext.lwjglVersion = "3.2.1"
+project.ext.jomlVersion = "1.9.13"
+
+switch (OperatingSystem.current()) {
+    case OperatingSystem.LINUX:
+        project.ext.lwjglNatives = "natives-linux"
+        break
+    case OperatingSystem.MAC_OS:
+        project.ext.lwjglNatives = "natives-macos"
+        break
+    case OperatingSystem.WINDOWS:
+        project.ext.lwjglNatives = "natives-windows"
+        break
+}
 
 sourceSets {
     simplefrag
@@ -46,6 +58,7 @@ dependencies {
     runtime "org.lwjgl:lwjgl-jemalloc:${lwjglVersion}:${lwjglNatives}"
     runtime "org.lwjgl:lwjgl-openal:${lwjglVersion}:${lwjglNatives}"
     runtime "org.lwjgl:lwjgl-stb:${lwjglVersion}:${lwjglNatives}"
+    if (lwjglNatives == 'natives-macos') runtime "org.lwjgl:lwjgl-vulkan:${lwjglVersion}:${lwjglNatives}"
 }
 
 run {
