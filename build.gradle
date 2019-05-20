@@ -31,6 +31,9 @@ switch (OperatingSystem.current()) {
         break
 }
 
+project.ext.nativeModules = 'org.lwjgl.natives,org.lwjgl.glfw.natives'
+if (lwjglNatives == 'natives-macos') project.ext.nativeModules += ',org.lwjgl.vulkan.natives'
+
 sourceSets {
     simplefrag
     simplevert
@@ -62,14 +65,14 @@ dependencies {
 }
 
 run {
-    jvmArgs('--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives')
+    jvmArgs('--add-modules', nativeModules)
 }
 
 jlink {
-    options = ['--compress', '2', '--no-header-files', '--no-man-pages', '--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives']
+    options = ['--compress', '2', '--no-header-files', '--no-man-pages', '--add-modules', nativeModules]
     launcher {
         name = 'HelloVulkan'
-        jvmArgs = ['--add-modules', 'org.lwjgl.natives,org.lwjgl.glfw.natives']
+        jvmArgs = ['--add-modules', nativeModules]
     }
 }
 
